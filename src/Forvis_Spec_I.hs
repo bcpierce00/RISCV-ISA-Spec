@@ -22,7 +22,23 @@ import Machine_State
 import CSR_File
 import Virtual_Mem
 
-import Forvis_Spec_Finish_Instr     -- Canonical ways for finish an instruction
+import Forvis_Spec_Finish_Instr     -- Canonical ways to finish an instruction
+
+-- New experimental stuff
+
+type Instr_Spec = Instr -> Bool -> Machine_State -> (Bool, Machine_State)
+
+demonadify :: (Instr -> Bool -> Machine_State -> (Bool, Machine_State))
+           -> (Machine_State -> Instr -> Bool -> (Bool, Machine_State))
+demonadify f m i b = f i b m
+
+newtype Spec a = Spec { runSpec :: Machine_State -> (a, (Bool,Machine_State)) }
+
+class Monad Spec where
+  m >>= f = error "foo"
+
+legal_when :: Bool -> Machine_State -> (Bool, Machine_State)
+legal_when b mstate = (b,mstate)
 
 -- ================================================================
 -- 'I' Base instruction set
@@ -32,23 +48,24 @@ import Forvis_Spec_Finish_Instr     -- Canonical ways for finish an instruction
 -- ================================================================
 -- LUI
 
-spec_LUI :: Machine_State -> Instr -> Bool -> (Bool, Machine_State)
-spec_LUI    mstate           instr    is_C =
-  let
+spec_LUIm :: Instr_Spec
+spec_LUIm    instr    is_C    mstate =
+  do
     -- Instr fields: U-type
-    (imm20, rd, opcode) = ifields_U_type  instr
+    let (imm20, rd, opcode) = ifields_U_type  instr
 
     -- Decode check
-    is_legal = (opcode == opcode_LUI)
+    legal_when (opcode == opcode_LUI)
 
     -- Semantics
-    xlen   = mstate_xlen_read  mstate
-    imm32  = shiftL  imm20  12
-    rd_val = sign_extend  32  xlen  imm32
+    let xlen   = mstate_xlen_read  mstate
+    let imm32  = shiftL  imm20  12
+    let rd_val = sign_extend  32  xlen  imm32
 
-    mstate1 = finish_rd_and_pc_incr  mstate  rd  rd_val  is_C
-  in
-    (is_legal, mstate1)
+    let mstate1 = finish_rd_and_pc_incr  mstate  rd  rd_val  is_C
+    return mstate1
+
+spec_LUI = demonadify spec_LUIm
 
 -- ================================================================
 -- AUIPC
@@ -231,6 +248,7 @@ spec_LOAD    mstate           instr    is_C =
                     || is_LBU
                     || is_LHU
                     || (is_LWU && (rv == RV64))))
+                    
     -- Semantics
     --     Compute effective address
     rs1_val = mstate_gpr_read  mstate  rs1
